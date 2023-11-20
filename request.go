@@ -133,6 +133,16 @@ func (r *Requester) Get(ctx context.Context, endpoint string, responseStruct int
 	return r.Do(ctx, ar, responseStruct, querystring)
 }
 
+func (r *Requester) GetJnlpInfo(ctx context.Context, endpoint string, responseStruct interface{}, querystring map[string]string) (*http.Response, error) {
+	ar := NewAPIRequest("GET", endpoint, nil)
+	if err := r.SetCrumb(ctx, ar); err != nil {
+		return nil, err
+	}
+	ar.SetHeader("Content-Type", "application/x-java-jnlp-file")
+	ar.Suffix = ""
+	return r.Do(ctx, ar, responseStruct, querystring)
+}
+
 func (r *Requester) SetClient(client *http.Client) *Requester {
 	r.Client = client
 	return r
