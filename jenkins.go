@@ -154,6 +154,9 @@ func (j *Jenkins) CreateNode(ctx context.Context, name string, numExecutors int,
 	node := &Node{Jenkins: j, Raw: new(NodeResponse), Base: "/computer/" + name}
 	NODE_TYPE := "hudson.slaves.DumbSlave$DescriptorImpl"
 	MODE := "NORMAL"
+	if _, ok := params["mode"]; ok {
+		MODE = strings.ToUpper(params["mode"])
+	}
 	qr := map[string]string{
 		"name": name,
 		"type": NODE_TYPE,
@@ -191,6 +194,12 @@ func (j *Jenkins) CreateNode(ctx context.Context, name string, numExecutors int,
 func (j *Jenkins) DeleteNode(ctx context.Context, name string) (bool, error) {
 	node := Node{Jenkins: j, Raw: new(NodeResponse), Base: "/computer/" + name}
 	return node.Delete(ctx)
+}
+
+// Get Node Secret use for auto join cluster
+func (j *Jenkins) GetNodeSecret(ctx context.Context, name string) (string, error) {
+	node := Node{Jenkins: j, Raw: new(NodeResponse), Base: "/computer/" + name}
+	return node.GetSecret(ctx)
 }
 
 // Create a new folder
