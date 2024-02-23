@@ -343,7 +343,7 @@ func (j *Job) Copy(ctx context.Context, destinationName string) (*Job, error) {
 		return nil, err
 	}
 	if resp.StatusCode == 200 {
-		newJob := &Job{Jenkins: j.Jenkins, Raw: new(JobResponse), Base: j.parentBase() + "/" + destinationName}
+		newJob := &Job{Jenkins: j.Jenkins, Raw: new(JobResponse), Base: j.parentBase() + "/job/" + destinationName}
 		_, err := newJob.Poll(ctx)
 		if err != nil {
 			return nil, err
