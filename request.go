@@ -55,11 +55,12 @@ func NewAPIRequest(method string, endpoint string, payload io.Reader) *APIReques
 }
 
 type Requester struct {
-	Base      string
-	BasicAuth *BasicAuth
-	Client    *http.Client
-	CACert    []byte
-	SslVerify bool
+	Base        string
+	BasicAuth   *BasicAuth
+	Client      *http.Client
+	CACert      []byte
+	SslVerify   bool
+	connControl chan struct{}
 }
 
 func (r *Requester) SetCrumb(ctx context.Context, ar *APIRequest) error {
@@ -92,6 +93,16 @@ func (r *Requester) Post(ctx context.Context, endpoint string, payload io.Reader
 	ar.SetHeader("Content-Type", "application/x-www-form-urlencoded")
 	ar.Suffix = ""
 	return r.Do(ctx, ar, &responseStruct, querystring)
+}
+
+func (r *Requester) PostForm(ctx context.Context, endpoint string, payload io.Reader, responseStruct interface{}, formString map[string]string) (*http.Response, error) {
+	ar := NewAPIRequest("POST", endpoint, payload)
+	if err := r.SetCrumb(ctx, ar); err != nil {
+		return nil, err
+	}
+	ar.SetHeader("Content-Type", "application/x-www-form-urlencoded")
+	ar.Suffix = ""
+	return r.DoPostForm(ar, responseStruct, formString)
 }
 
 func (r *Requester) PostFiles(ctx context.Context, endpoint string, payload io.Reader, responseStruct interface{}, querystring map[string]string, files []string) (*http.Response, error) {
@@ -252,6 +263,53 @@ func (r *Requester) Do(ctx context.Context, ar *APIRequest, responseStruct inter
 
 }
 
+func (r *Requester) DoPostForm(ar *APIRequest, responseStruct interface{}, form map[string]string) (*http.Response, error) {
+
+	if !strings.HasSuffix(ar.Endpoint, "/") && ar.Method != "POST" {
+		ar.Endpoint += "/"
+	}
+	URL, err := url.Parse(r.Base + ar.Endpoint + ar.Suffix)
+
+	if err != nil {
+		return nil, err
+	}
+	formValue := make(url.Values)
+	for k, v := range form {
+		formValue.Set(k, v)
+	}
+	req, err := http.NewRequest("POST", URL.String(), strings.NewReader(formValue.Encode()))
+	if r.BasicAuth != nil {
+		req.SetBasicAuth(r.BasicAuth.Username, r.BasicAuth.Password)
+	}
+	req.Close = true
+	req.Header.Add("Accept", "*/*")
+	for k := range ar.Headers {
+		req.Header.Add(k, ar.Headers.Get(k))
+	}
+	r.connControl <- struct{}{}
+	if response, err := r.Client.Do(req); err != nil {
+		<-r.connControl
+		return nil, err
+	} else {
+		<-r.connControl
+		errorText := response.Header.Get("X-Error")
+		if errorText != "" {
+			return nil, errors.New(errorText)
+		}
+		err := CheckResponse(response)
+		if err != nil {
+			return nil, err
+		}
+		switch responseStruct.(type) {
+		case *string:
+			return r.ReadRawResponse(response, responseStruct)
+		default:
+			return r.ReadJSONResponse(response, responseStruct)
+		}
+
+	}
+}
+
 func (r *Requester) ReadRawResponse(response *http.Response, responseStruct interface{}) (*http.Response, error) {
 	defer response.Body.Close()
 
@@ -273,4 +331,32 @@ func (r *Requester) ReadJSONResponse(response *http.Response, responseStruct int
 
 	json.NewDecoder(response.Body).Decode(responseStruct)
 	return response, nil
+}
+
+func CheckResponse(r *http.Response) error {
+
+	switch r.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent, http.StatusFound, http.StatusNotModified:
+		return nil
+	}
+	defer r.Body.Close()
+	errorResponse := &ErrorResponse{Response: r}
+	data, err := io.ReadAll(r.Body)
+	if err == nil && data != nil {
+		errorResponse.Body = data
+		errorResponse.Message = string(data)
+	}
+
+	return errorResponse
+}
+
+type ErrorResponse struct {
+	Body     []byte
+	Response *http.Response
+	Message  string
+}
+
+func (e *ErrorResponse) Error() string {
+	u := fmt.Sprintf("%s://%s%s", e.Response.Request.URL.Scheme, e.Response.Request.URL.Host, e.Response.Request.URL.RequestURI())
+	return fmt.Sprintf("%s %s: %d %s", e.Response.Request.Method, u, e.Response.StatusCode, e.Message)
 }
